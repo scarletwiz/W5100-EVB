@@ -1,0 +1,66 @@
+Configuration	W5100_new_lib
+STM32CubeMX 	6.6.1
+Date	09/13/2022
+MCU	STM32F103VCTx
+
+
+
+PERIPHERALS	MODES	FUNCTIONS	PINS
+SPI2	Full-Duplex Master	SPI2_MISO	PB14
+SPI2	Full-Duplex Master	SPI2_MOSI	PB15
+SPI2	Full-Duplex Master	SPI2_SCK	PB13
+USART1	Asynchronous	USART1_RX	PA10
+USART1	Asynchronous	USART1_TX	PA9
+
+
+
+Pin Nb	PINs	FUNCTIONs	LABELs
+7	PC13-TAMPER-RTC*	RTC_OUT	
+52	PB13	SPI2_SCK	
+53	PB14	SPI2_MISO	
+54	PB15	SPI2_MOSI	
+68	PA9	USART1_TX	
+69	PA10	USART1_RX	
+PERIPHERALS	MODES	FUNCTIONS	PINS
+SPI2	Full-Duplex Master	SPI2_MISO	PB14
+SPI2	Full-Duplex Master	SPI2_MOSI	PB15
+SPI2	Full-Duplex Master	SPI2_SCK	PB13
+USART1	Asynchronous	USART1_RX	PA10
+USART1	Asynchronous	USART1_TX	PA9
+
+
+
+Pin Nb	PINs	FUNCTIONs	LABELs
+7	PC13-TAMPER-RTC*	RTC_OUT	
+52	PB13	SPI2_SCK	
+53	PB14	SPI2_MISO	
+54	PB15	SPI2_MOSI	
+68	PA9	USART1_TX	
+69	PA10	USART1_RX	
+
+
+
+SOFTWARE PROJECT
+
+Project Settings : 
+Project Name : W5100_new_lib
+Project Folder : C:\Users\scarlet\STM32CubeIDE\workspace_1.10.1\W5100_new_lib
+Toolchain / IDE : STM32CubeIDE
+Firmware Package Name and Version : STM32Cube FW_F1 V1.8.4
+
+
+Code Generation Settings : 
+STM32Cube MCU packages and embedded software packs : Copy only the necessary library files
+Generate peripheral initialization as a pair of '.c/.h' files per peripheral : No
+Backup previously generated files when re-generating : No
+Delete previously generated files when not re-generated : Yes
+Set all free pins as analog (to optimize the power consumption) : No
+
+
+Toolchains Settings : 
+Compiler Optimizations : 
+
+
+
+
+
