@@ -84,19 +84,22 @@ enum
 
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi2;
+DMA_HandleTypeDef hdma_spi2_tx;
+DMA_HandleTypeDef hdma_spi2_rx;
 
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
+
 /* NET */
 wiz_NetInfo gWIZNETINFO = {
 		.mac = {0x00, 0x08, 0xdc, 0x6f, 0x00, 0x8a},
-		.ip = {192, 168, 11, 101},
+		.ip = {192, 168, 11, 105},
 		.sn = {255, 255, 255, 0},
 		.gw = {192, 168, 11, 1},
 		.dns = {8, 8, 8, 8},
-		.dhcp = NETINFO_STATIC
+		.dhcp = NETINFO_DHCP
 };
 
 uint8_t ethBuf0[ETH_MAX_BUF_SIZE];
@@ -107,11 +110,17 @@ static uint8_t g_dhcp_get_ip_flag = 0;
 /* UART */
 uint8_t rxData[2];
 
+/* SPI_DMA */
+#define SPI_DMA_TXRX_BUF_SIZE 1024
+uint8_t tx_buf[SPI_DMA_TXRX_BUF_SIZE];
+uint8_t rx_buf[SPI_DMA_TXRX_BUF_SIZE];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_SPI2_Init(void);
 /* USER CODE BEGIN PFP */
@@ -171,6 +180,11 @@ void wizchip_check(void)
         printf(" ACCESS ERR : VERSIONR != 0x51, read value = 0x%02x\n", getVER());
         while (1);
     }
+    else //for test
+    {
+    	printf("ver info get!\n");
+
+    }
 }
 
 void wizchip_initialize(void)
@@ -180,22 +194,26 @@ void wizchip_initialize(void)
 	intr_kind temp= IK_DEST_UNREACH;
 
 	csEnable();
+
 	if (ctlwizchip(CW_INIT_WIZCHIP, (void*)W5100S_AdrSet) == -1)
 	{
 		printf(">>>>W5100s memory initialization failed\r\n");
 	}
+	printf("\n=============================================3_1\n");
 	if(ctlwizchip(CW_SET_INTRMASK,&temp) == -1)
 	{
 		printf("W5100S interrupt\r\n");
 	}
-
+	  printf("\n=============================================4\n");
 	wizchip_check();
+	  printf("\n=============================================4_1\n");
 	while(1)
 	{
 		ctlwizchip(CW_GET_PHYLINK, &tmp1 );
 		ctlwizchip(CW_GET_PHYLINK, &tmp2 );
 		if(tmp1==PHY_LINK_ON && tmp2==PHY_LINK_ON) break;
 	}
+	  printf("\n=============================================5\n");
 }
 
 void print_network_information(wiz_NetInfo* WIZNETINFO)
@@ -222,20 +240,175 @@ uint8_t spiReadByte(void)
 void spiWriteByte(uint8_t writeByte)
 {
 	uint8_t readByte=0;
+
 	while(HAL_SPI_GetState(&hspi2)!=HAL_SPI_STATE_READY);
 	HAL_SPI_TransmitReceive(&hspi2, &writeByte, &readByte, 1, 10);
+
 }
+
+
+/**@brief Change SPI State to READY
+*/
+void HAL_SPI_STATE_CHANGE(SPI_HandleTypeDef *hspi)
+{
+  hspi->State = HAL_SPI_STATE_READY;
+}
+
 void spiReadBurst(uint8_t* pBuf, uint16_t len)
 {
-	while(HAL_SPI_GetState(&hspi2)!=HAL_SPI_STATE_READY);
-	HAL_SPI_Receive(&hspi2, pBuf, len, 1000);
+	HAL_StatusTypeDef ret;
+	uint8_t writeByte=0xFF;
+
+	printf("DMA_R\n");
+
+	if (hspi2.hdmarx== NULL || hspi2.hdmatx== NULL)
+	{
+		printf("NULL instance---");
+		return;
+	}
+/*
+	hspi2.hdmarx->Instance = DMA1_Channel4;
+	hspi2.hdmarx->DmaBaseAddress= pBuf;
+	hspi2.hdmarx->Init.MemDataAlignment= len;
+	HAL_DMA_Init(&hdma_spi2_rx);
+
+	hspi2.hdmatx->Instance = DMA1_Channel5;
+	hspi2.hdmatx->DmaBaseAddress= &writeByte;
+	hspi2.hdmatx->Init.MemDataAlignment= len;
+	HAL_DMA_Init(&hdma_spi2_tx);
+
+	__HAL_DMA_ENABLE(&hdma_spi2_tx);
+	__HAL_DMA_ENABLE(&hdma_spi2_rx);
+*/
+
+	while (HAL_DMA_GetState(&hdma_spi2_tx) != HAL_DMA_STATE_READY);
+	while (HAL_DMA_GetState(&hdma_spi2_rx) != HAL_DMA_STATE_READY);
+	//while (HAL_SPI_GetState(&hspi2) != HAL_SPI_STATE_READY);
+
+	ret=HAL_SPI_TransmitReceive_DMA(&hspi2, &writeByte, pBuf, len);
+	if (ret!= HAL_OK)
+	{
+		printf(" >read failed: %d\n",  ret);
+	}
+
+	while (HAL_DMA_GetState(&hdma_spi2_tx) == HAL_DMA_STATE_RESET);
+	while (HAL_DMA_GetState(&hdma_spi2_rx) == HAL_DMA_STATE_RESET);
+
+	printf("read data: %.*s\n", len, pBuf);
+	printf("read DMA state: rx%d,tx%d,spi%d\n", HAL_DMA_GetState(&hdma_spi2_rx), HAL_DMA_GetState(&hdma_spi2_tx), HAL_SPI_GetState(&hspi2));
+
+	//__HAL_DMA_DISABLE(&hdma_spi2_tx);
+	//__HAL_DMA_DISABLE(&hdma_spi2_rx);
+	//HAL_SPI_STATE_CHANGE(&hspi2);
+
+	return;
 }
 
 void spiWriteBurst(uint8_t* pBuf, uint16_t len)
 {
-	while(HAL_SPI_GetState(&hspi2)!=HAL_SPI_STATE_READY);
-	HAL_SPI_Transmit(&hspi2, pBuf, len, 1000);
+	HAL_StatusTypeDef ret;
+	uint8_t readByte;
+
+	printf("DMA_W\n");
+	if (hspi2.hdmarx== NULL || hspi2.hdmatx== NULL)
+	{
+		printf("NULL instance---");
+		return;
+	}
+/*
+	hspi2.hdmarx->Instance = DMA1_Channel4;
+	hspi2.hdmarx->Init.MemDataAlignment= len;
+	hspi2.hdmarx->Init.Mode=DMA_CIRCULAR;
+	HAL_DMA_Init(&hdma_spi2_rx);
+
+	hspi2.hdmatx->Instance = DMA1_Channel5;
+	hspi2.hdmatx->DmaBaseAddress= pBuf;
+	hspi2.hdmatx->Init.MemDataAlignment= len;
+	HAL_DMA_Init(&hdma_spi2_tx);
+
+	__HAL_DMA_ENABLE(&hdma_spi2_tx);
+	__HAL_DMA_ENABLE(&hdma_spi2_rx);
+*/
+	while (HAL_DMA_GetState(&hdma_spi2_tx) != HAL_DMA_STATE_READY);
+	while (HAL_DMA_GetState(&hdma_spi2_rx) != HAL_DMA_STATE_READY);
+	//while (HAL_SPI_GetState(&hspi2) != HAL_SPI_STATE_READY);
+
+	ret=HAL_SPI_TransmitReceive_DMA(&hspi2, (uint8_t*)pBuf, (uint8_t *)readByte, len);
+	if (ret!= HAL_OK)
+	{
+		printf(" >write failed: %d\n",  ret);
+	}
+	while (HAL_DMA_GetState(&hdma_spi2_tx) == HAL_DMA_STATE_RESET);
+	while (HAL_DMA_GetState(&hdma_spi2_rx) == HAL_DMA_STATE_RESET);
+	while (HAL_SPI_GetState(&hspi2) == HAL_SPI_STATE_RESET);
+
+	printf("Write data: %.*s\n", len, pBuf);
+	printf("write DMA state: rx%d,tx%d,spi%d\n", HAL_DMA_GetState(&hdma_spi2_rx), HAL_DMA_GetState(&hdma_spi2_tx), HAL_SPI_GetState(&hspi2));
+	//HAL_SPI_STATE_CHANGE(&hspi2);
+
+	//__HAL_DMA_DISABLE(&hdma_spi2_tx);
+	//__HAL_DMA_DISABLE(&hdma_spi2_rx);
+
+	return;
 }
+
+iodata_t busReadByte(uint32_t addr)
+{
+	return (*((volatile uint8_t*)(addr)));
+}
+
+void busWriteByte(uint32_t addr, iodata_t data)
+{
+	(*(volatile uint8_t*)(addr)) = data;
+}
+
+#if 0
+void busWriteBurst(uint32_t addr, uint8_t* pBuf ,uint32_t len)
+{
+
+	DMA_TX_InitStructure.DMA_BufferSize = len;
+	DMA_TX_InitStructure.DMA_MemoryBaseAddr = addr;
+	DMA_TX_InitStructure.DMA_PeripheralBaseAddr = pBuf;
+
+
+	DMA_Init(W5100S_DMA_CHANNEL_TX, &DMA_TX_InitStructure);
+
+	DMA_Cmd(W5100S_DMA_CHANNEL_TX, ENABLE);
+
+
+	while(DMA_GetFlagStatus(DMA_TX_FLAG) == RESET);
+
+
+	DMA_ClearFlag(DMA_TX_FLAG);
+
+	DMA_Cmd(W5100S_DMA_CHANNEL_TX, DISABLE);
+
+
+}
+
+
+void busReadBurst(uint32_t addr,uint8_t* pBuf, uint32_t len)
+{
+
+		DMA_RX_InitStructure.DMA_BufferSize = len;
+		DMA_RX_InitStructure.DMA_MemoryBaseAddr =pBuf;
+		DMA_RX_InitStructure.DMA_PeripheralBaseAddr =addr;
+
+		DMA_Init(W5100S_DMA_CHANNEL_RX, &DMA_RX_InitStructure);
+
+		DMA_Cmd(W5100S_DMA_CHANNEL_RX, ENABLE);
+		/* Waiting for the end of Data Transfer */
+		while(DMA_GetFlagStatus(DMA_RX_FLAG) == RESET);
+
+
+		DMA_ClearFlag(DMA_RX_FLAG);
+
+		DMA_Cmd(W5100S_DMA_CHANNEL_RX, DISABLE);
+
+}
+
+
+#endif
 
 void csEnable(void)
 {
@@ -352,6 +525,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART1_UART_Init();
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
@@ -360,27 +534,29 @@ int main(void)
 
   wizchip_reset();
   csDisable();
-#if _WIZCHIP_IO_MODE_ & _WIZCHIP_IO_MODE_SPI_
-
 
   reg_wizchip_cs_cbfunc(csEnable,csDisable);// CS function register
+#if _WIZCHIP_IO_MODE_ & _WIZCHIP_IO_MODE_SPI_
+
   reg_wizchip_spi_cbfunc(spiReadByte, spiWriteByte);// SPI method callback registration
-  //reg_wizchip_spiburst_cbfunc(spiReadBurst, spiWriteBurst);// use DMA
+  reg_wizchip_spiburst_cbfunc(spiReadBurst, spiWriteBurst);// use DMA
 
 #else
 	// Indirect bus method callback registration
-	//reg_wizchip_bus_cbfunc(busReadByte, busWriteByte);
+	reg_wizchip_bus_cbfunc(busReadByte, busWriteByte);
 #endif
 
   wizchip_initialize();
-
+  printf("\n=============================================3\n");
    if (gWIZNETINFO.dhcp == NETINFO_DHCP) // DHCP
    {
+	   printf("\n=============================================6-1\n");
 	   setSHAR(gWIZNETINFO.mac);
 	   wizchip_dhcp_init();
    }
    else
    {
+	   printf("\n=============================================6-2\n");
 	   ctlnetwork(CN_SET_NETINFO, (void *)&gWIZNETINFO);
 
 	   memset(&WIZNETINFO, 0x00, sizeof(wiz_NetInfo));
@@ -401,9 +577,9 @@ int main(void)
 
 	  loopback_tcps(SOCKET_LOOP, ethBuf0, 3000);
 
-	  /* USER CODE END WHILE */
+    /* USER CODE END WHILE */
 
-	  /* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
@@ -514,6 +690,17 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
 
 }
 
