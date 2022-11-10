@@ -83,11 +83,9 @@ enum
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-SPI_HandleTypeDef hspi2;
-DMA_HandleTypeDef hdma_spi2_tx;
-DMA_HandleTypeDef hdma_spi2_rx;
-
 UART_HandleTypeDef huart1;
+
+SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
 
@@ -120,9 +118,8 @@ uint8_t rx_buf[SPI_DMA_TXRX_BUF_SIZE];
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_SPI2_Init(void);
+static void MX_FSMC_Init(void);
 /* USER CODE BEGIN PFP */
 
 void print_network_information(wiz_NetInfo* WIZNETINFO);
@@ -192,28 +189,23 @@ void wizchip_initialize(void)
 	uint8_t W5100S_AdrSet[2][4]= {{2,2,2,2},{2,2,2,2}};
     uint8_t tmp1, tmp2;
 	intr_kind temp= IK_DEST_UNREACH;
-
-	csEnable();
-
+	printf("\n=============================================2_1\n");
 	if (ctlwizchip(CW_INIT_WIZCHIP, (void*)W5100S_AdrSet) == -1)
 	{
 		printf(">>>>W5100s memory initialization failed\r\n");
 	}
-	printf("\n=============================================3_1\n");
+	printf("\n=============================================2_2\n");
 	if(ctlwizchip(CW_SET_INTRMASK,&temp) == -1)
 	{
 		printf("W5100S interrupt\r\n");
 	}
-	  printf("\n=============================================4\n");
 	wizchip_check();
-	  printf("\n=============================================4_1\n");
 	while(1)
 	{
 		ctlwizchip(CW_GET_PHYLINK, &tmp1 );
 		ctlwizchip(CW_GET_PHYLINK, &tmp2 );
 		if(tmp1==PHY_LINK_ON && tmp2==PHY_LINK_ON) break;
 	}
-	  printf("\n=============================================5\n");
 }
 
 void print_network_information(wiz_NetInfo* WIZNETINFO)
@@ -224,7 +216,7 @@ void print_network_information(wiz_NetInfo* WIZNETINFO)
     printf("Gate way   : %d.%d.%d.%d\n\r",WIZNETINFO->gw[0],WIZNETINFO->gw[1],WIZNETINFO->gw[2],WIZNETINFO->gw[3]);
     printf("DNS Server : %d.%d.%d.%d\n\r",WIZNETINFO->dns[0],WIZNETINFO->dns[1],WIZNETINFO->dns[2],WIZNETINFO->dns[3]);
 }
-
+#if _WIZCHIP_IO_MODE_ & _WIZCHIP_IO_MODE_SPI_
 /* SPI */
 uint8_t spiReadByte(void)
 {
@@ -351,16 +343,26 @@ void spiWriteBurst(uint8_t* pBuf, uint16_t len)
 
 	return;
 }
+#else
 
+//#define W5100SAddress  ((uint32_t)0x60000000)
 iodata_t busReadByte(uint32_t addr)
 {
+	//(*((volatile uint8_t*)(W5100SAddress+1))) = (uint8_t)((addr &0xFF00)>>8);
+	//(*((volatile uint8_t*)(W5100SAddress+2))) = (uint8_t)((addr) & 0x00FF);
+
+	//return  (*((volatile uint8_t*)(W5100SAddress+3)));
+
+	printf(" read addr: %2x, <%d \n", addr, (*((volatile uint8_t*)(addr))));
 	return (*((volatile uint8_t*)(addr)));
 }
 
 void busWriteByte(uint32_t addr, iodata_t data)
 {
+	printf(" write addr: %2x, >%d \n", addr, data);
 	(*(volatile uint8_t*)(addr)) = data;
 }
+#endif
 
 #if 0
 void busWriteBurst(uint32_t addr, uint8_t* pBuf ,uint32_t len)
@@ -525,38 +527,36 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();
   MX_USART1_UART_Init();
-  MX_SPI2_Init();
+  MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
   HAL_RCC_GetSysClockFreq();
   HAL_UART_Receive_IT(&huart1, rxData, 1);
 
   wizchip_reset();
-  csDisable();
 
-  reg_wizchip_cs_cbfunc(csEnable,csDisable);// CS function register
+  printf("\n=============================================1\n");
 #if _WIZCHIP_IO_MODE_ & _WIZCHIP_IO_MODE_SPI_
+  csDisable();
+  reg_wizchip_cs_cbfunc(csEnable,csDisable);// CS function register
 
   reg_wizchip_spi_cbfunc(spiReadByte, spiWriteByte);// SPI method callback registration
   reg_wizchip_spiburst_cbfunc(spiReadBurst, spiWriteBurst);// use DMA
-
+  csEnable();
 #else
 	// Indirect bus method callback registration
 	reg_wizchip_bus_cbfunc(busReadByte, busWriteByte);
+	printf("\n=============================================2\n");
 #endif
-
   wizchip_initialize();
   printf("\n=============================================3\n");
    if (gWIZNETINFO.dhcp == NETINFO_DHCP) // DHCP
    {
-	   printf("\n=============================================6-1\n");
 	   setSHAR(gWIZNETINFO.mac);
 	   wizchip_dhcp_init();
    }
    else
    {
-	   printf("\n=============================================6-2\n");
 	   ctlnetwork(CN_SET_NETINFO, (void *)&gWIZNETINFO);
 
 	   memset(&WIZNETINFO, 0x00, sizeof(wiz_NetInfo));
@@ -596,11 +596,12 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI_DIV2;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -620,44 +621,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief SPI2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_SPI2_Init(void)
-{
-
-  /* USER CODE BEGIN SPI2_Init 0 */
-
-  /* USER CODE END SPI2_Init 0 */
-
-  /* USER CODE BEGIN SPI2_Init 1 */
-
-  /* USER CODE END SPI2_Init 1 */
-  /* SPI2 parameter configuration*/
-  hspi2.Instance = SPI2;
-  hspi2.Init.Mode = SPI_MODE_MASTER;
-  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
-  hspi2.Init.CLKPolarity = SPI_POLARITY_HIGH;
-  hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
-  hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
-  hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
-  hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
-  hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_ENABLE;
-  hspi2.Init.CRCPolynomial = 10;
-  if (HAL_SPI_Init(&hspi2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN SPI2_Init 2 */
-
-  /* USER CODE END SPI2_Init 2 */
-
 }
 
 /**
@@ -694,17 +657,6 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
-
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -715,20 +667,73 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_8|GPIO_PIN_7, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_8, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PD8 PD7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_7;
+  /*Configure GPIO pin : PD8 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
+}
+
+/* FSMC initialization function */
+static void MX_FSMC_Init(void)
+{
+
+  /* USER CODE BEGIN FSMC_Init 0 */
+
+  /* USER CODE END FSMC_Init 0 */
+
+  FSMC_NORSRAM_TimingTypeDef Timing = {0};
+
+  /* USER CODE BEGIN FSMC_Init 1 */
+
+  /* USER CODE END FSMC_Init 1 */
+
+  /** Perform the SRAM1 memory initialization sequence
+  */
+  hsram1.Instance = FSMC_NORSRAM_DEVICE;
+  hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
+  /* hsram1.Init */
+  hsram1.Init.NSBank = FSMC_NORSRAM_BANK1;
+  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_ENABLE;
+  hsram1.Init.MemoryType = FSMC_MEMORY_TYPE_PSRAM;
+  hsram1.Init.MemoryDataWidth = FSMC_NORSRAM_MEM_BUS_WIDTH_8;
+  hsram1.Init.BurstAccessMode = FSMC_BURST_ACCESS_MODE_DISABLE;
+  hsram1.Init.WaitSignalPolarity = FSMC_WAIT_SIGNAL_POLARITY_LOW;
+  hsram1.Init.WrapMode = FSMC_WRAP_MODE_DISABLE;
+  hsram1.Init.WaitSignalActive = FSMC_WAIT_TIMING_BEFORE_WS;
+  hsram1.Init.WriteOperation = FSMC_WRITE_OPERATION_ENABLE;
+  hsram1.Init.WaitSignal = FSMC_WAIT_SIGNAL_DISABLE;
+  hsram1.Init.ExtendedMode = FSMC_EXTENDED_MODE_DISABLE;
+  hsram1.Init.AsynchronousWait = FSMC_ASYNCHRONOUS_WAIT_DISABLE;
+  hsram1.Init.WriteBurst = FSMC_WRITE_BURST_DISABLE;
+  /* Timing */
+  Timing.AddressSetupTime = 0x03;
+  Timing.AddressHoldTime = 0x01;
+  Timing.DataSetupTime = 0x08;
+  Timing.BusTurnAroundDuration = 0x00;
+  Timing.CLKDivision = 16;
+  Timing.DataLatency = 17;
+  Timing.AccessMode = FSMC_ACCESS_MODE_A;
+  /* ExtTiming */
+
+  if (HAL_SRAM_Init(&hsram1, &Timing, NULL) != HAL_OK)
+  {
+    Error_Handler( );
+  }
+
+  /* USER CODE BEGIN FSMC_Init 2 */
+
+  /* USER CODE END FSMC_Init 2 */
 }
 
 /* USER CODE BEGIN 4 */
